@@ -1,2 +1,3 @@
 # MCP23S17
-port expander, teensy, spi
+
+Forum: https://forum.pjrc.com/threads/59937-New-MCP23S17-Library?p=232145#post232145

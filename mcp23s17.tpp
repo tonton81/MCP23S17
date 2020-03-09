@@ -4,9 +4,30 @@
 MCP23S17_FUNC void MCP23S17_OPT::begin() {
   ::pinMode(chipSelect, OUTPUT);
   ::digitalWriteFast(chipSelect, HIGH);
+
+  for ( uint8_t addr = 0; addr < 8; addr++ ) { /* check if any chips are already initialized */
+    bus->beginTransaction(SPISettings(speed,MSBFIRST,SPI_MODE0));
+    ::digitalWriteFast(chipSelect, LOW);
+    bus->transfer16(((0x41 | (addr << 1)) << 8) | 0xA);
+    if ( __builtin_bswap16(bus->transfer16(0xFFFF)) == 0x1818 ) {
+       ::digitalWriteFast(chipSelect, HIGH);
+       bus->endTransaction();
+       detectChips(); /* detect chips */
+       readRegisters(); /* copy registers to memory */
+       return;
+    }
+    ::digitalWriteFast(chipSelect, HIGH);
+    bus->endTransaction();
+  }
+  /* no chips initialized, configuring defaults */
+  defaults();
+}
+
+MCP23S17_FUNC void MCP23S17_OPT::defaults() {
   initHAEN(); /* enable hardware addressing */
   detectChips(); /* detect chips */
-  initPins(); /* initialize pin configurations */
+  initDefaults(); /* initialize default configuration */
+  readRegisters(); /* copy registers to memory */
 }
 
 MCP23S17_FUNC void MCP23S17_OPT::initHAEN() {
@@ -25,16 +46,22 @@ MCP23S17_FUNC void MCP23S17_OPT::initHAEN() {
   bus->endTransaction();
 }
 
-MCP23S17_FUNC void MCP23S17_OPT::initPins() {
+MCP23S17_FUNC void MCP23S17_OPT::initDefaults() {
   for ( uint8_t addr = 0; addr < 8; addr++ ) {
     bus->beginTransaction(SPISettings(speed,MSBFIRST,SPI_MODE0));
     ::digitalWriteFast(chipSelect, LOW);
     bus->transfer16(((0x40 | (addr << 1)) << 8) | 0x0);
-    bus->transfer16(0xFFFF); /* all inputs */
-    bus->transfer16(0x0000); /* non-inverted logic */
-    bus->transfer16(0x0000); /* disables gpio interrupt-on-change */
-    bus->transfer16(0x0000); /* default compare register for interrupt-on-change */
-    bus->transfer16(0x0000); /* pin value is compared against the previous pin value */
+    bus->transfer16(0xFFFF); /* IODIR */
+    bus->transfer16(0x0000); /* IPOL */
+    bus->transfer16(0x0000); /* GPINTEN */
+    bus->transfer16(0x0000); /* DEFVAL */
+    bus->transfer16(0x0000); /* INTCON */
+    bus->transfer16(0x1818); /* IOCON */
+    bus->transfer16(0x0000); /* GPPU */
+    bus->transfer16(0x0000); /* INTF */
+    bus->transfer16(0x0000); /* INTCAP */
+    bus->transfer16(0x0000); /* GPIO */
+    bus->transfer16(0x0000); /* LATCH */
     ::digitalWriteFast(chipSelect, HIGH);
     bus->endTransaction();
 
@@ -56,45 +83,21 @@ MCP23S17_FUNC void MCP23S17_OPT::disableInterrupt(uint8_t pin) {
       continue;
     }
 
-    bus->beginTransaction(SPISettings(speed,MSBFIRST,SPI_MODE0)); /* read GPINTEN register */
+    bus->beginTransaction(SPISettings(speed,MSBFIRST,SPI_MODE0)); /* read registers */
     ::digitalWriteFast(chipSelect, LOW);
     bus->transfer16(((0x41 | (i << 1)) << 8) | 0x4);
-    uint16_t data = __builtin_bswap16(bus->transfer16(0xFFFF)) & ~(1UL << pin); /* disable interrupt */
+    chipData[i][2] = __builtin_bswap16(bus->transfer16(0xFFFF)) & ~(1UL << pin); /* GPINTEN */
+    chipData[i][3] = __builtin_bswap16(bus->transfer16(0xFFFF)) & ~(1UL << pin); /* DEFVAL */
+    chipData[i][4] = __builtin_bswap16(bus->transfer16(0xFFFF)) & ~(1UL << pin); /* INTCON */
     ::digitalWriteFast(chipSelect, HIGH);
     bus->endTransaction();
 
-    bus->beginTransaction(SPISettings(speed,MSBFIRST,SPI_MODE0)); /* write GPINTEN register */
+    bus->beginTransaction(SPISettings(speed,MSBFIRST,SPI_MODE0)); /* write registers */
     ::digitalWriteFast(chipSelect, LOW);
     bus->transfer16(((0x40 | (i << 1)) << 8) | 0x4);
-    bus->transfer16(__builtin_bswap16(data));
-    ::digitalWriteFast(chipSelect, HIGH);
-    bus->endTransaction();
-
-    bus->beginTransaction(SPISettings(speed,MSBFIRST,SPI_MODE0)); /* read INTCON register */
-    ::digitalWriteFast(chipSelect, LOW);
-    bus->transfer16(((0x41 | (i << 1)) << 8) | 0x8);
-    data = __builtin_bswap16(bus->transfer16(0xFFFF)) & ~(1UL << pin);
-    ::digitalWriteFast(chipSelect, HIGH);
-    bus->endTransaction();
-
-    bus->beginTransaction(SPISettings(speed,MSBFIRST,SPI_MODE0)); /* write INTCON register */
-    ::digitalWriteFast(chipSelect, LOW);
-    bus->transfer16(((0x40 | (i << 1)) << 8) | 0x8);
-    bus->transfer16(__builtin_bswap16(data));
-    ::digitalWriteFast(chipSelect, HIGH);
-    bus->endTransaction();
-
-    bus->beginTransaction(SPISettings(speed,MSBFIRST,SPI_MODE0)); /* read DEFVAL register */
-    ::digitalWriteFast(chipSelect, LOW);
-    bus->transfer16(((0x41 | (i << 1)) << 8) | 0x6);
-    data = __builtin_bswap16(bus->transfer16(0xFFFF)) & ~(1UL << pin);
-    ::digitalWriteFast(chipSelect, HIGH);
-    bus->endTransaction();
-
-    bus->beginTransaction(SPISettings(speed,MSBFIRST,SPI_MODE0)); /* write DEFVAL register */
-    ::digitalWriteFast(chipSelect, LOW);
-    bus->transfer16(((0x40 | (i << 1)) << 8) | 0x6);
-    bus->transfer16(__builtin_bswap16(data));
+    bus->transfer16(__builtin_bswap16(chipData[i][2])); /* GPINTEN */
+    bus->transfer16(__builtin_bswap16(chipData[i][3])); /* DEFVAL */
+    bus->transfer16(__builtin_bswap16(chipData[i][4])); /* INTCON */
     ::digitalWriteFast(chipSelect, HIGH);
     bus->endTransaction();
 
@@ -111,49 +114,21 @@ MCP23S17_FUNC void MCP23S17_OPT::enableInterrupt(uint8_t pin, uint8_t mode) {
       continue;
     }
 
-    bus->beginTransaction(SPISettings(speed,MSBFIRST,SPI_MODE0)); /* read INTCON register */
-    ::digitalWriteFast(chipSelect, LOW);
-    bus->transfer16(((0x41 | (i << 1)) << 8) | 0x8);
-    uint16_t data = __builtin_bswap16(bus->transfer16(0xFFFF));
-    ::digitalWriteFast(chipSelect, HIGH);
-    bus->endTransaction();
-
-    ( mode == CHANGE ) ? data &= ~(1UL << pin) : data |= (1UL << pin);
-
-    bus->beginTransaction(SPISettings(speed,MSBFIRST,SPI_MODE0)); /* write INTCON register */
-    ::digitalWriteFast(chipSelect, LOW);
-    bus->transfer16(((0x40 | (i << 1)) << 8) | 0x8);
-    bus->transfer16(__builtin_bswap16(data));
-    ::digitalWriteFast(chipSelect, HIGH);
-    bus->endTransaction();
-
-    bus->beginTransaction(SPISettings(speed,MSBFIRST,SPI_MODE0)); /* read DEFVAL register */
-    ::digitalWriteFast(chipSelect, LOW);
-    bus->transfer16(((0x41 | (i << 1)) << 8) | 0x6);
-    data = __builtin_bswap16(bus->transfer16(0xFFFF));
-    ::digitalWriteFast(chipSelect, HIGH);
-    bus->endTransaction();
-
-    ( mode == RISING ) ? data &= ~(1UL << pin) : data |= (1UL << pin);
-
-    bus->beginTransaction(SPISettings(speed,MSBFIRST,SPI_MODE0)); /* write DEFVAL register */
-    ::digitalWriteFast(chipSelect, LOW);
-    bus->transfer16(((0x40 | (i << 1)) << 8) | 0x6);
-    bus->transfer16(__builtin_bswap16(data));
-    ::digitalWriteFast(chipSelect, HIGH);
-    bus->endTransaction();
-
     bus->beginTransaction(SPISettings(speed,MSBFIRST,SPI_MODE0)); /* read GPINTEN register */
     ::digitalWriteFast(chipSelect, LOW);
     bus->transfer16(((0x41 | (i << 1)) << 8) | 0x4);
-    data = __builtin_bswap16(bus->transfer16(0xFFFF)) | (1UL << pin);
+    chipData[i][2] = __builtin_bswap16(bus->transfer16(0xFFFF)) | (1UL << pin); /* GPINTEN */
+    chipData[i][3] = (__builtin_bswap16(bus->transfer16(0xFFFF)) & ~(1UL << pin)) | (( mode == RISING ) ? 0 : (1UL << pin) );
+    chipData[i][4] = (__builtin_bswap16(bus->transfer16(0xFFFF)) & ~(1UL << pin)) | (( mode == CHANGE ) ? 0 : (1UL << pin) );
     ::digitalWriteFast(chipSelect, HIGH);
     bus->endTransaction();
 
     bus->beginTransaction(SPISettings(speed,MSBFIRST,SPI_MODE0)); /* write GPINTEN register */
     ::digitalWriteFast(chipSelect, LOW);
     bus->transfer16(((0x40 | (i << 1)) << 8) | 0x4);
-    bus->transfer16(__builtin_bswap16(data));
+    bus->transfer16(__builtin_bswap16(chipData[i][2])); /* GPINTEN */
+    bus->transfer16(__builtin_bswap16(chipData[i][3])); /* DEFVAL */
+    bus->transfer16(__builtin_bswap16(chipData[i][4])); /* INTCON */
     ::digitalWriteFast(chipSelect, HIGH);
     bus->endTransaction();
 
@@ -161,7 +136,7 @@ MCP23S17_FUNC void MCP23S17_OPT::enableInterrupt(uint8_t pin, uint8_t mode) {
   }
 }
 
-MCP23S17_FUNC void MCP23S17_OPT::invert(uint8_t pin) {
+MCP23S17_FUNC void MCP23S17_OPT::invert(uint8_t pin, bool yes) {
   if ( pin >= (__builtin_popcount(detectedChips) * 16U) ) return;
   for ( uint8_t i = 0; i < 8; i++ ) {
     if ( !(detectedChips & (1U << i)) ) continue;
@@ -173,16 +148,16 @@ MCP23S17_FUNC void MCP23S17_OPT::invert(uint8_t pin) {
     bus->beginTransaction(SPISettings(speed,MSBFIRST,SPI_MODE0)); /* read IPOL register */
     ::digitalWriteFast(chipSelect, LOW);
     bus->transfer16(((0x41 | (i << 1)) << 8) | 0x2);
-    uint16_t data = __builtin_bswap16(bus->transfer16(0xFFFF));
+    chipData[i][1] = __builtin_bswap16(bus->transfer16(0xFFFF));
     ::digitalWriteFast(chipSelect, HIGH);
     bus->endTransaction();
 
-    data = (data & ~(1UL << pin)) | (bool)!(data & (1UL << pin)) << pin;
+    chipData[i][1] = (chipData[i][1] & ~(1UL << pin)) | ((yes) ? (1UL << pin) : 0);
 
     bus->beginTransaction(SPISettings(speed,MSBFIRST,SPI_MODE0)); /* write IPOL register */
     ::digitalWriteFast(chipSelect, LOW);
     bus->transfer16(((0x40 | (i << 1)) << 8) | 0x2);
-    bus->transfer16(__builtin_bswap16(data));
+    bus->transfer16(__builtin_bswap16(chipData[i][1]));
     ::digitalWriteFast(chipSelect, HIGH);
     bus->endTransaction();
 
@@ -199,19 +174,23 @@ MCP23S17_FUNC void MCP23S17_OPT::toggle(uint8_t pin) {
       continue;
     }
 
-    bus->beginTransaction(SPISettings(speed,MSBFIRST,SPI_MODE0)); /* read port register */
-    ::digitalWriteFast(chipSelect, LOW);
-    bus->transfer16(((0x41 | (i << 1)) << 8) | 0x12);
-    uint16_t data = __builtin_bswap16(bus->transfer16(0xFFFF));
-    ::digitalWriteFast(chipSelect, HIGH);
-    bus->endTransaction();
+    if (micros() - counter_GPIO[i] > 50) {
+      bus->beginTransaction(SPISettings(speed,MSBFIRST,SPI_MODE0)); /* read port register */
+      ::digitalWriteFast(chipSelect, LOW);
+      bus->transfer16(((0x41 | (i << 1)) << 8) | 0x12);
+      uint16_t data = __builtin_bswap16(bus->transfer16(0xFFFF)); /* Read GPIOs */
+      ::digitalWriteFast(chipSelect, HIGH);
+      bus->endTransaction();
+      checkInterrupt(i, data);
+      counter_GPIO[i] = micros();
+    }
 
-    data = (data & ~(1UL << pin)) | (bool)!(data & (1UL << pin)) << pin;
+    chipData[i][9] = (chipData[i][9] & ~(1UL << pin)) | (bool)!(chipData[i][9] & (1UL << pin)) << pin;
 
     bus->beginTransaction(SPISettings(speed,MSBFIRST,SPI_MODE0)); /* write port register */
     ::digitalWriteFast(chipSelect, LOW);
     bus->transfer16(((0x40 | (i << 1)) << 8) | 0x12);
-    bus->transfer16(__builtin_bswap16(data));
+    bus->transfer16(__builtin_bswap16(chipData[i][9]));
     ::digitalWriteFast(chipSelect, HIGH);
     bus->endTransaction();
 
@@ -221,7 +200,6 @@ MCP23S17_FUNC void MCP23S17_OPT::toggle(uint8_t pin) {
 
 MCP23S17_FUNC bool MCP23S17_OPT::digitalRead(uint8_t pin) {
   if ( pin >= (__builtin_popcount(detectedChips) * 16U) ) return 0;
-  uint16_t data = 0;
   for ( uint8_t i = 0; i < 8; i++ ) {
     if ( !(detectedChips & (1U << i)) ) continue;
     if ( pin > 15 ) {
@@ -229,16 +207,20 @@ MCP23S17_FUNC bool MCP23S17_OPT::digitalRead(uint8_t pin) {
       continue;
     }
 
+    if (micros() - counter_GPIO[i] < 50) return ( chipData[i][9] & (1UL << pin) );
+
     bus->beginTransaction(SPISettings(speed,MSBFIRST,SPI_MODE0)); /* read port register */
     ::digitalWriteFast(chipSelect, LOW);
     bus->transfer16(((0x41 | (i << 1)) << 8) | 0x12);
-    data = __builtin_bswap16(bus->transfer16(0xFFFF));
+    uint16_t data = __builtin_bswap16(bus->transfer16(0xFFFF)); /* Read GPIOs */
     ::digitalWriteFast(chipSelect, HIGH);
     bus->endTransaction();
-  
+    checkInterrupt(i, data);
+    counter_GPIO[i] = micros();
+    return (chipData[i][9] & (1UL << pin));
     break;
   }
-  return (data & (1UL << pin));
+  return 0;
 }
 
 MCP23S17_FUNC void MCP23S17_OPT::digitalWrite(uint8_t pin, bool level) {
@@ -250,19 +232,23 @@ MCP23S17_FUNC void MCP23S17_OPT::digitalWrite(uint8_t pin, bool level) {
       continue;
     }
 
-    bus->beginTransaction(SPISettings(speed,MSBFIRST,SPI_MODE0)); /* read port register */
-    ::digitalWriteFast(chipSelect, LOW);
-    bus->transfer16(((0x41 | (i << 1)) << 8) | 0x12);
-    uint16_t data = __builtin_bswap16(bus->transfer16(0xFFFF));
-    ::digitalWriteFast(chipSelect, HIGH);
-    bus->endTransaction();
+    if (micros() - counter_GPIO[i] > 50) {
+      bus->beginTransaction(SPISettings(speed,MSBFIRST,SPI_MODE0)); /* read port register */
+      ::digitalWriteFast(chipSelect, LOW);
+      bus->transfer16(((0x41 | (i << 1)) << 8) | 0x12);
+      uint16_t data = __builtin_bswap16(bus->transfer16(0xFFFF)); /* Read GPIOs */
+      ::digitalWriteFast(chipSelect, HIGH);
+      bus->endTransaction();
+      checkInterrupt(i, data);
+      counter_GPIO[i] = micros();
+    }
 
-    data = (data & ~(1UL << pin)) | (level << pin); /* set new pin state */
+    chipData[i][9] = (chipData[i][9] & ~(1UL << pin)) | (level << pin);
 
     bus->beginTransaction(SPISettings(speed,MSBFIRST,SPI_MODE0)); /* write port register */
     ::digitalWriteFast(chipSelect, LOW);
     bus->transfer16(((0x40 | (i << 1)) << 8) | 0x12);
-    bus->transfer16(__builtin_bswap16(data));
+    bus->transfer16(__builtin_bswap16(chipData[i][9]));
     ::digitalWriteFast(chipSelect, HIGH);
     bus->endTransaction();
 
@@ -282,36 +268,141 @@ MCP23S17_FUNC void MCP23S17_OPT::pinMode(uint8_t pin, uint8_t mode) {
     bus->beginTransaction(SPISettings(speed,MSBFIRST,SPI_MODE0)); /* read direction register */
     ::digitalWriteFast(chipSelect, LOW);
     bus->transfer16(((0x41 | (i << 1)) << 8) | 0x0);
-    uint16_t data = __builtin_bswap16(bus->transfer16(0xFFFF));
+    chipData[i][6] = (__builtin_bswap16(bus->transfer16(0xFFFF)) & ~(1UL << pin)) | (( mode == OUTPUT ) ? 0 : (1UL << pin) );
     ::digitalWriteFast(chipSelect, HIGH);
     bus->endTransaction();
-
-    ( mode == OUTPUT ) ? data &= ~(1UL << pin) : data |= (1UL << pin); /* output(0) or input(1)? */
 
     bus->beginTransaction(SPISettings(speed,MSBFIRST,SPI_MODE0)); /* write direction register */
     ::digitalWriteFast(chipSelect, LOW);
     bus->transfer16(((0x40 | (i << 1)) << 8) | 0x0);
-    bus->transfer16(__builtin_bswap16(data));
+    bus->transfer16(__builtin_bswap16(chipData[i][6]));
     ::digitalWriteFast(chipSelect, HIGH);
     bus->endTransaction();
 
     bus->beginTransaction(SPISettings(speed,MSBFIRST,SPI_MODE0)); /* read pullup register */
     ::digitalWriteFast(chipSelect, LOW);
     bus->transfer16(((0x41 | (i << 1)) << 8) | 0xC);
-    data = __builtin_bswap16(bus->transfer16(0xFFFF));
+    chipData[i][6] = (__builtin_bswap16(bus->transfer16(0xFFFF)) & ~(1UL << pin)) | (( mode == INPUT_PULLUP ) ? (1UL << pin) : 0 );
     ::digitalWriteFast(chipSelect, HIGH);
     bus->endTransaction();
-
-    ( mode == INPUT_PULLUP ) ? data |= (1UL << pin) : data &= ~(1UL << pin); /* pullup(1)? */
 
     bus->beginTransaction(SPISettings(speed,MSBFIRST,SPI_MODE0)); /* write pullup register */
     ::digitalWriteFast(chipSelect, LOW);
     bus->transfer16(((0x40 | (i << 1)) << 8) | 0xC);
-    bus->transfer16(__builtin_bswap16(data));
+    bus->transfer16(__builtin_bswap16(chipData[i][6]));
     ::digitalWriteFast(chipSelect, HIGH);
     bus->endTransaction();
 
     break;
+  }
+}
+
+MCP23S17_FUNC void MCP23S17_OPT::writeGPIO(MCP23S17_CHIP chip, uint8_t value, MCP23S17_BANK bank) {
+  bus->beginTransaction(SPISettings(speed,MSBFIRST,SPI_MODE0)); /* write port register */
+  ::digitalWriteFast(chipSelect, LOW);
+  bus->transfer16(((0x40 | (chip << 1)) << 8) | 0x12 );
+  chipData[chip][9] = (bank) ? ((chipData[chip][9] & 0xFF00) | value) : ((chipData[chip][9] & 0x00FF) | (value << 8));
+  bus->transfer16(__builtin_bswap16(chipData[chip][9]));
+  ::digitalWriteFast(chipSelect, HIGH);
+  bus->endTransaction();
+}
+
+MCP23S17_FUNC void MCP23S17_OPT::writeGPIO(MCP23S17_CHIP chip, uint16_t value) {
+  bus->beginTransaction(SPISettings(speed,MSBFIRST,SPI_MODE0)); /* write port register */
+  ::digitalWriteFast(chipSelect, LOW);
+  bus->transfer16(((0x40 | (chip << 1)) << 8) | 0x12);
+  bus->transfer16(__builtin_bswap16(value));
+  chipData[chip][9] = value; 
+  ::digitalWriteFast(chipSelect, HIGH);
+  bus->endTransaction();
+}
+
+MCP23S17_FUNC void MCP23S17_OPT::readRegisters() {
+ for ( uint8_t addr = 0; addr < 8; addr++ ) {
+    bus->beginTransaction(SPISettings(speed,MSBFIRST,SPI_MODE0));
+    ::digitalWriteFast(chipSelect, LOW);
+    bus->transfer16(((0x41 | (addr << 1)) << 8) | 0x0);
+    for ( uint8_t i = 0; i < 11; i++ ) {
+      chipData[addr][i] = __builtin_bswap16(bus->transfer16(0xFFFF)); /* Dump chip registers */
+    }
+    ::digitalWriteFast(chipSelect, HIGH);
+    bus->endTransaction();
+  }
+}
+
+MCP23S17_FUNC void MCP23S17_OPT::attachInterrupt(uint8_t pin, _MCP23S17_pin_ptr handler, uint8_t type) {
+  _pinHandlers[pin] = handler;
+  if ( type == CHANGE ) enableInterrupt(pin, CHANGE);
+  if ( type == RISING ) enableInterrupt(pin, RISING);
+  if ( type == FALLING ) enableInterrupt(pin, FALLING);
+}
+
+MCP23S17_FUNC void MCP23S17_OPT::events() {
+  if ( millis() - chipRefresh > 5000 ) { /* refresh local register every 5 seconds */
+    readRegisters();
+    chipRefresh = millis();
+  }
+  for ( uint8_t addr = 0; addr < 8; addr++ ) {
+    bus->beginTransaction(SPISettings(speed,MSBFIRST,SPI_MODE0));
+    ::digitalWriteFast(chipSelect, LOW);
+    bus->transfer16(((0x41 | (addr << 1)) << 8) | 0x12);
+    uint16_t data = __builtin_bswap16(bus->transfer16(0xFFFF)); /* Dump GPIO */
+    ::digitalWriteFast(chipSelect, HIGH);
+    bus->endTransaction();
+    checkInterrupt(addr, data);
+  }
+
+  uint8_t qSize = interruptQueue.size();
+  if ( qSize ) {
+    uint8_t pin = interruptQueue.read();
+    if ( _pinHandlers[pin] ) _pinHandlers[pin]();
+  }
+}
+
+MCP23S17_FUNC void MCP23S17_OPT::checkInterrupt(uint8_t addr, uint16_t data) {
+  if ( chipData[addr][9] != data ) {
+    for ( uint8_t i = 0; i < 16; i++ ) {
+      if ( !(chipData[addr][2] & (1UL << i)) ) continue; /* GPINTEN: skip non interrupt enabled pins */
+      if ( !(chipData[addr][4] & (1UL << i)) ) { /* INTCON: ON-CHANGE INTERRUPT */
+        if ( (chipData[addr][9] & (1UL << i)) != (data & (1UL << i)) ) {
+          bool found = 0;
+          for ( uint8_t c = 0; c < interruptQueue.size(); c++ ) {
+            if ( interruptQueue.peek(c) == ((addr*16)+i) ) {
+              found = 1;
+              break;
+            }
+          }
+          if ( !found ) interruptQueue.write((addr*16)+i);
+        }
+      }
+      else {
+        if ( !(chipData[addr][3] & (1UL << i)) ) { /* DEFVAL: ON RISING */
+          if ( !(chipData[addr][9] & (1UL << i)) && (data & (1UL << i)) ) {
+            bool found = 0;
+            for ( uint8_t c = 0; c < interruptQueue.size(); c++ ) {
+              if ( interruptQueue.peek(c) == ((addr*16)+i) ) {
+                found = 1;
+                break;
+              }
+            }
+            if ( !found ) interruptQueue.write((addr*16)+i);
+          } 
+        }
+        else { /* DEFVAL: ON FALLING */
+          if ( (chipData[addr][9] & (1UL << i)) && !(data & (1UL << i)) ) {
+            bool found = 0;
+            for ( uint8_t c = 0; c < interruptQueue.size(); c++ ) {
+              if ( interruptQueue.peek(c) == ((addr*16)+i) ) {
+                found = 1;
+                break;
+              }
+            }
+            if ( !found ) interruptQueue.write((addr*16)+i);
+          } 
+        }
+      }
+    }
+    chipData[addr][9] = data; /* Update GPIO register */
   }
 }
 
@@ -340,6 +431,7 @@ MCP23S17_FUNC void MCP23S17_OPT::info() {
       ::digitalWriteFast(chipSelect, LOW);
       bus->transfer16(((0x41 | (i << 1)) << 8) | 0x12);
       uint16_t data = __builtin_bswap16(bus->transfer16(0xFFFF));
+      checkInterrupt(i, data);
       ::digitalWriteFast(chipSelect, HIGH);
       bus->endTransaction();
       Serial.printf("Addr%u:\t%u    %u    %u    %u    %u    %u    %u    %u    %u    %u    %u    %u    %u    %u    %u    %u\n",i, (bool)(data & (1UL << 15)), (bool)(data & (1UL << 14)), (bool)(data & (1UL << 13)), (bool)(data & (1UL << 12)), (bool)(data & (1UL << 11)), (bool)(data & (1UL << 10)), (bool)(data & (1UL << 9)), (bool)(data & (1UL << 8)), (bool)(data & (1UL << 7)), (bool)(data & (1UL << 6)), (bool)(data & (1UL << 5)), (bool)(data & (1UL << 4)), (bool)(data & (1UL << 3)), (bool)(data & (1UL << 2)), (bool)(data & (1UL << 1)), (bool)(data & (1UL << 0)) );
@@ -360,6 +452,7 @@ MCP23S17_FUNC void MCP23S17_OPT::info() {
 
       for ( uint16_t p = 0, data = 0; p < 11; p++ ) {
         data = __builtin_bswap16(bus->transfer16(0xFFFF));
+        if ( p == 9 ) checkInterrupt(i, data);
         Serial.printf("(0x%04X)", data);
         Serial.print("  ");
       }
@@ -367,8 +460,6 @@ MCP23S17_FUNC void MCP23S17_OPT::info() {
       ::digitalWriteFast(chipSelect, HIGH);
       bus->endTransaction();
   }
-
-
 
   Serial.printf("\n\nRegisters, BIN format:\n--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n");
   Serial.printf("                IODIR                 IPOL                 GPINTEN               DEFVAL                INTCON                IOCON                 GPPU                   INTF                INTCAP                 GPIO                  OLAT\n");
@@ -385,6 +476,7 @@ MCP23S17_FUNC void MCP23S17_OPT::info() {
 
       for ( uint16_t p = 0, data = 0; p < 11; p++ ) {
         data = __builtin_bswap16(bus->transfer16(0xFFFF));
+        if ( p == 9 ) checkInterrupt(i, data);
         Serial.printf("(0b%u%u%u%u%u%u%u%u%u%u%u%u%u%u%u%u)", (bool)(data & (1UL << 15)), (bool)(data & (1UL << 14)), (bool)(data & (1UL << 13)), (bool)(data & (1UL << 12)), (bool)(data & (1UL << 11)), (bool)(data & (1UL << 10)), (bool)(data & (1UL << 9)), (bool)(data & (1UL << 8)), (bool)(data & (1UL << 7)), (bool)(data & (1UL << 6)), (bool)(data & (1UL << 5)), (bool)(data & (1UL << 4)), (bool)(data & (1UL << 3)), (bool)(data & (1UL << 2)), (bool)(data & (1UL << 1)), (bool)(data & (1UL << 0)) );
         Serial.print("  ");
       }
@@ -392,14 +484,5 @@ MCP23S17_FUNC void MCP23S17_OPT::info() {
       ::digitalWriteFast(chipSelect, HIGH);
       bus->endTransaction();
   }
-
-
-
   Serial.println("\n\n");
-
 }
-
-
-
-
-

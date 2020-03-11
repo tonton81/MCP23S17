@@ -64,13 +64,7 @@ MCP23S17_FUNC void MCP23S17_OPT::initDefaults() {
     bus->transfer16(0x0000); /* LATCH */
     ::digitalWriteFast(chipSelect, HIGH);
     bus->endTransaction();
-
-    bus->beginTransaction(SPISettings(speed,MSBFIRST,SPI_MODE0));
-    ::digitalWriteFast(chipSelect, LOW);
-    bus->transfer16(((0x40 | (addr << 1)) << 8) | 0xC);
-    bus->transfer16(0x0000); /* disable all pullups */
-    ::digitalWriteFast(chipSelect, HIGH);
-    bus->endTransaction();
+    counter_GPIO[addr] = micros();
   }
 }
 
@@ -174,7 +168,7 @@ MCP23S17_FUNC void MCP23S17_OPT::toggle(uint8_t pin) {
       continue;
     }
 
-    if (micros() - counter_GPIO[i] > 50) {
+    if (micros() - counter_GPIO[i] > gpioCacheTimeout) {
       bus->beginTransaction(SPISettings(speed,MSBFIRST,SPI_MODE0)); /* read port register */
       ::digitalWriteFast(chipSelect, LOW);
       bus->transfer16(((0x41 | (i << 1)) << 8) | 0x12);
@@ -182,7 +176,6 @@ MCP23S17_FUNC void MCP23S17_OPT::toggle(uint8_t pin) {
       ::digitalWriteFast(chipSelect, HIGH);
       bus->endTransaction();
       checkInterrupt(i, data);
-      counter_GPIO[i] = micros();
     }
 
     chipData[i][9] = (chipData[i][9] & ~(1UL << pin)) | (bool)!(chipData[i][9] & (1UL << pin)) << pin;
@@ -207,7 +200,7 @@ MCP23S17_FUNC bool MCP23S17_OPT::digitalRead(uint8_t pin) {
       continue;
     }
 
-    if (micros() - counter_GPIO[i] < 50) return ( chipData[i][9] & (1UL << pin) );
+    if (micros() - counter_GPIO[i] < gpioCacheTimeout) return ( chipData[i][9] & (1UL << pin) );
 
     bus->beginTransaction(SPISettings(speed,MSBFIRST,SPI_MODE0)); /* read port register */
     ::digitalWriteFast(chipSelect, LOW);
@@ -216,7 +209,6 @@ MCP23S17_FUNC bool MCP23S17_OPT::digitalRead(uint8_t pin) {
     ::digitalWriteFast(chipSelect, HIGH);
     bus->endTransaction();
     checkInterrupt(i, data);
-    counter_GPIO[i] = micros();
     return (chipData[i][9] & (1UL << pin));
     break;
   }
@@ -232,7 +224,7 @@ MCP23S17_FUNC void MCP23S17_OPT::digitalWrite(uint8_t pin, bool level) {
       continue;
     }
 
-    if (micros() - counter_GPIO[i] > 50) {
+    if (micros() - counter_GPIO[i] > gpioCacheTimeout) {
       bus->beginTransaction(SPISettings(speed,MSBFIRST,SPI_MODE0)); /* read port register */
       ::digitalWriteFast(chipSelect, LOW);
       bus->transfer16(((0x41 | (i << 1)) << 8) | 0x12);
@@ -240,7 +232,6 @@ MCP23S17_FUNC void MCP23S17_OPT::digitalWrite(uint8_t pin, bool level) {
       ::digitalWriteFast(chipSelect, HIGH);
       bus->endTransaction();
       checkInterrupt(i, data);
-      counter_GPIO[i] = micros();
     }
 
     chipData[i][9] = (chipData[i][9] & ~(1UL << pin)) | (level << pin);
@@ -301,10 +292,11 @@ MCP23S17_FUNC void MCP23S17_OPT::writeGPIO(MCP23S17_CHIP chip, uint8_t value, MC
   bus->beginTransaction(SPISettings(speed,MSBFIRST,SPI_MODE0)); /* write port register */
   ::digitalWriteFast(chipSelect, LOW);
   bus->transfer16(((0x40 | (chip << 1)) << 8) | 0x12 );
-  chipData[chip][9] = (bank) ? ((chipData[chip][9] & 0xFF00) | value) : ((chipData[chip][9] & 0x00FF) | (value << 8));
+  chipData[chip][9] = (!bank) ? ((chipData[chip][9] & 0xFF00) | value) : ((chipData[chip][9] & 0x00FF) | (value << 8));
   bus->transfer16(__builtin_bswap16(chipData[chip][9]));
   ::digitalWriteFast(chipSelect, HIGH);
   bus->endTransaction();
+  counter_GPIO[chip] = micros();
 }
 
 MCP23S17_FUNC void MCP23S17_OPT::writeGPIO(MCP23S17_CHIP chip, uint16_t value) {
@@ -315,6 +307,7 @@ MCP23S17_FUNC void MCP23S17_OPT::writeGPIO(MCP23S17_CHIP chip, uint16_t value) {
   chipData[chip][9] = value; 
   ::digitalWriteFast(chipSelect, HIGH);
   bus->endTransaction();
+  counter_GPIO[chip] = micros();
 }
 
 MCP23S17_FUNC void MCP23S17_OPT::readRegisters() {
@@ -327,6 +320,7 @@ MCP23S17_FUNC void MCP23S17_OPT::readRegisters() {
     }
     ::digitalWriteFast(chipSelect, HIGH);
     bus->endTransaction();
+    counter_GPIO[addr] = micros();
   }
 }
 
@@ -338,10 +332,6 @@ MCP23S17_FUNC void MCP23S17_OPT::attachInterrupt(uint8_t pin, _MCP23S17_pin_ptr 
 }
 
 MCP23S17_FUNC void MCP23S17_OPT::events() {
-  if ( millis() - chipRefresh > 5000 ) { /* refresh local register every 5 seconds */
-    readRegisters();
-    chipRefresh = millis();
-  }
   for ( uint8_t addr = 0; addr < 8; addr++ ) {
     bus->beginTransaction(SPISettings(speed,MSBFIRST,SPI_MODE0));
     ::digitalWriteFast(chipSelect, LOW);
@@ -404,6 +394,7 @@ MCP23S17_FUNC void MCP23S17_OPT::checkInterrupt(uint8_t addr, uint16_t data) {
     }
     chipData[addr][9] = data; /* Update GPIO register */
   }
+  counter_GPIO[addr] = micros();
 }
 
 MCP23S17_FUNC void MCP23S17_OPT::detectChips() {

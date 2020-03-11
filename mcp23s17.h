@@ -50,6 +50,7 @@ MCP23S17_CLASS class MCP23S17 : public MCP23S17_Base {
     void info();
     void events();
     void attachInterrupt(uint8_t pin, _MCP23S17_pin_ptr handler, uint8_t type);
+    void setCache(uint16_t micros) { gpioCacheTimeout = micros; }
   private:
     Circular_Buffer<uint8_t, 128> interruptQueue;
     _MCP23S17_pin_ptr _pinHandlers[128] = { nullptr }; 
@@ -61,8 +62,8 @@ MCP23S17_CLASS class MCP23S17 : public MCP23S17_Base {
     uint8_t detectedChips = 0;
     uint32_t chipData[8][11] = { { 0 } , { 0 } };
     uint32_t counter_GPIO[8] = { 0 };
-    uint32_t chipRefresh = 5000;
     void checkInterrupt(uint8_t addr, uint16_t data);
+    uint16_t gpioCacheTimeout = 50;
 };
 
 #include "mcp23s17.tpp"

@@ -68,7 +68,7 @@ MCP23S17_FUNC void MCP23S17_OPT::initDefaults() {
   }
 }
 
-MCP23S17_FUNC void MCP23S17_OPT::disableInterrupt(uint8_t pin) {
+MCP23S17_FUNC void MCP23S17_OPT::detachInterrupt(uint8_t pin) {
   if ( pin >= (__builtin_popcount(detectedChips) * 16U) ) return;
   for ( uint8_t i = 0; i < 8; i++ ) {
     if ( !(detectedChips & (1U << i)) ) continue;
@@ -342,8 +342,7 @@ MCP23S17_FUNC void MCP23S17_OPT::events() {
     checkInterrupt(addr, data);
   }
 
-  uint8_t qSize = interruptQueue.size();
-  if ( qSize ) {
+  if ( interruptQueue.size() ) {
     uint8_t pin = interruptQueue.read();
     if ( _pinHandlers[pin] ) _pinHandlers[pin]();
   }

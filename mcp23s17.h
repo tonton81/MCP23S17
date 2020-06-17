@@ -46,11 +46,12 @@ MCP23S17_CLASS class MCP23S17 : public MCP23S17_Base {
     void invert(uint8_t pin, bool yes = 1);
     void writeGPIO(MCP23S17_CHIP chip, uint8_t value, MCP23S17_BANK bank);
     void writeGPIO(MCP23S17_CHIP chip, uint16_t value);
-    void disableInterrupt(uint8_t pin);
+    void detachInterrupt(uint8_t pin);
     void info();
     void events();
     void attachInterrupt(uint8_t pin, _MCP23S17_pin_ptr handler, uint8_t type);
     void setCache(uint16_t micros) { gpioCacheTimeout = micros; }
+
   private:
     Circular_Buffer<uint8_t, 128> interruptQueue;
     _MCP23S17_pin_ptr _pinHandlers[128] = { nullptr }; 
@@ -59,10 +60,10 @@ MCP23S17_CLASS class MCP23S17 : public MCP23S17_Base {
     void initDefaults();
     void detectChips();
     void enableInterrupt(uint8_t pin, uint8_t mode);
+    void checkInterrupt(uint8_t addr, uint16_t data);
     uint8_t detectedChips = 0;
     uint32_t chipData[8][11] = { { 0 } , { 0 } };
     uint32_t counter_GPIO[8] = { 0 };
-    void checkInterrupt(uint8_t addr, uint16_t data);
     uint16_t gpioCacheTimeout = 50;
 };
 
